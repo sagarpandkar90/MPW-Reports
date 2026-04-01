@@ -10,8 +10,6 @@ def mothly_final_report():
     Manual data entry for 8 different health reports with landscape PDF generation
     """
 
-    st.set_page_config(page_title="मासिक आहवाल Data Entry", page_icon="📊", layout="wide")
-
     st.title("📊 मासिक आहवाल - Manual Data Entry")
 
     # Common metadata
@@ -632,10 +630,10 @@ def mothly_final_report():
                   if (val === '0' || val === 0 || val === '') return '';
                   return val;
                 }}
-                 
+
                 function addPageHeading2(title, monthYear) {{
                   return [
-                    
+
                     {{
                       text: title + ' ' + (monthYear || metadata.monthYear),
                       alignment: 'center',
