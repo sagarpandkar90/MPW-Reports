@@ -282,7 +282,7 @@ def monthly_diary():
             if vasti and vasti not in ("---", ""):
                 tapshil_col.append(f"घरभेट व कंटेनर सर्वेक्षण {vasti}")
             else:
-                tapshil_col.append("प्रा. आ. केंद्र शेळगाव ऑफिस वर्क")
+                tapshil_col.append("बहुउद्देशीय कार्य प्रा. आ. केंद्र शेळगाव")
             shera_col.append("")
 
     # ─────────────────────────────────────────────────────────────
