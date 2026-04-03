@@ -60,32 +60,40 @@ def house_visit_lookup():
             })
         return half_meta, data_rows
 
+    # ── IMPROVEMENT 1: load total_container from xlsx ──────────
     @st.cache_data
     def load_mno_records(path_str):
-        wb = load_workbook(path_str, read_only=True)
+        """Returns mno_map: { mno -> (family_head, member_count, total_container) }"""
+        wb = load_workbook(path_str, data_only=True)
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
         header = [str(c).strip().lower() if c else "" for c in rows[0]]
         try:
-            idx_mno  = next(i for i, h in enumerate(header) if 'm_no'        in h)
+            idx_mno  = next(i for i, h in enumerate(header) if 'm_no'         in h)
             idx_fam  = next(i for i, h in enumerate(header) if 'family_head'  in h)
             idx_mem  = next(i for i, h in enumerate(header) if 'member_count' in h)
         except StopIteration:
             st.error("❌ Shelgaon_mno_records.xlsx मध्ये 'm_no', 'family_head' किंवा 'member_count' column सापडले नाही!")
             return {}
+        # total_container column — optional, defaults to 0 if absent
+        idx_tc = next(
+            (i for i, h in enumerate(header) if 'total_container' in h),
+            None,
+        )
         mno_map = {}
         for row in rows[1:]:
             try:
                 mno  = int(row[idx_mno])
                 fam  = str(row[idx_fam]).strip() if row[idx_fam] else ""
                 mem  = int(row[idx_mem]) if row[idx_mem] is not None else 0
-                mno_map[mno] = (fam, mem)
+                tc   = int(row[idx_tc]) if (idx_tc is not None and row[idx_tc] is not None) else 0
+                mno_map[mno] = (fam, mem, tc)
             except (TypeError, ValueError):
                 continue
         return mno_map
 
     # ─────────────────────────────────────────────────────────────
-    # Helper
+    # Helpers
     # ─────────────────────────────────────────────────────────────
     def names_to_str(name_list):
         if not name_list:
@@ -94,71 +102,102 @@ def house_visit_lookup():
             return name_list[0]
         return ", ".join(name_list[:-1]) + " आणि " + name_list[-1]
 
+    def get_patient_display(info):
+        """Build 'रुग्णाचे नाव (लिंग, वय, इतर)' from info dict."""
+        # patient_name takes priority; fallback to kutumb selectbox name
+        name = info.get("patient_name", "").strip()
+        if not name:
+            sel = info.get("name", "")
+            if sel not in ("-- कुटुंब प्रमुख निवडा --", ""):
+                name = sel
+        if not name:
+            return ""
+        parts = []
+        if info.get("gender", "--") not in ("--", ""):
+            parts.append(info["gender"])
+        if info.get("age", "").strip():
+            parts.append(f"वय {info['age'].strip()}")
+        if info.get("other", "").strip():
+            parts.append(info["other"].strip())
+        suffix = f" ({', '.join(parts)})" if parts else ""
+        return name + suffix
+
     # ─────────────────────────────────────────────────────────────
     # Build patient lines — ONLY for conditions that ARE present
-    # Returns a single combined paragraph or empty string
     # ─────────────────────────────────────────────────────────────
     def build_patient_lines(
-        has_fever,    fever_name,
-        has_tb,       tb_name,
-        has_dog,      dog_name,
-        has_motibi,   motibi_name,
-        has_kusthar,  kusthar_name,
-        has_motibi_op, motibi_op_name,
+        has_fever,    fever_info,
+        has_tb,       tb_info,
+        has_dog,      dog_info,
+        has_motibi,   motibi_info,
+        has_kusthar,  kusthar_info,
+        has_motibi_op, motibi_op_info,
     ):
         lines = []
 
-        if has_fever and fever_name.strip():
-            lines.append(random.choice([
-                f"{fever_name} यांच्या घरातील एका सदस्याला ताप असल्याचे आढळले. त्यांना रक्त नमुना तपासणीसाठी प्राथमिक आरोग्य केंद्रात पाठविण्यात आले.",
-                f"{fever_name} यांच्या कुटुंबातील एक व्यक्ती तापाने आजारी असल्याचे निदर्शनास आले. हिवताप स्लाइड तयार करून त्यांना वैद्यकीय तपासणीस पाठविले.",
-                f"{fever_name} यांच्या घरी एक संशयित हिवताप / डेंग्यू रुग्ण आढळला. रुग्णाची माहिती वरिष्ठ कार्यालयास कळविण्यात आली व उपचार सुरू केले.",
-                f"{fever_name} यांच्या कुटुंबातील एका व्यक्तीला थंडी व ताप असल्याचे समजले. त्यांचा रक्त नमुना घेण्यात आला.",
-            ]))
+        if has_fever:
+            fever_name = get_patient_display(fever_info)
+            if fever_name:
+                lines.append(random.choice([
+                    f"{fever_name} यांना ताप असल्याचे आढळले. त्यांना रक्त नमुना तपासणीसाठी प्राथमिक आरोग्य केंद्रात पाठविण्यात आले.",
+                    f"{fever_name} यांना तापाने आजारी असल्याचे निदर्शनास आले. हिवताप स्लाइड तयार करून त्यांना वैद्यकीय तपासणीस पाठविले.",
+                    f"{fever_name} हे संशयित हिवताप / डेंग्यू रुग्ण आढळले. रुग्णाची माहिती वरिष्ठ कार्यालयास कळविण्यात आली व उपचार सुरू केले.",
+                    f"{fever_name} यांना थंडी व ताप असल्याचे समजले. त्यांचा रक्त नमुना घेण्यात आला.",
+                ]))
 
-        if has_tb and tb_name.strip():
-            lines.append(random.choice([
-                f"{tb_name} यांच्या घरातील एका व्यक्तीला दीर्घकाळ खोकला व वजन कमी होत असल्याची तक्रार असल्याने त्यांना संशयित क्षयरोग (TB) म्हणून नोंद करून DOTS केंद्रात पाठविण्यात आले.",
-                f"{tb_name} यांच्या कुटुंबातील एका सदस्यात क्षयरोगाची संशयित लक्षणे आढळली. त्यांना थुंकी तपासणीसाठी आरोग्य केंद्रात संदर्भित केले.",
-                f"{tb_name} यांच्या घरी एका व्यक्तीला दोन आठवड्यांपेक्षा जास्त काळ खोकला असल्याचे समजले. TB संशयित म्हणून नोंद करून आवश्यक तपासणी केली.",
-            ]))
+        if has_tb:
+            tb_name = get_patient_display(tb_info)
+            if tb_name:
+                lines.append(random.choice([
+                    f"{tb_name} यांना दीर्घकाळ खोकला व वजन कमी होत असल्याची तक्रार असल्याने त्यांना संशयित क्षयरोग (TB) म्हणून नोंद करून DOTS केंद्रात पाठविण्यात आले.",
+                    f"{tb_name} यांच्यात क्षयरोगाची संशयित लक्षणे आढळली. त्यांना थुंकी तपासणीसाठी आरोग्य केंद्रात संदर्भित केले.",
+                    f"{tb_name} यांना दोन आठवड्यांपेक्षा जास्त काळ खोकला असल्याचे समजले. TB संशयित म्हणून नोंद करून आवश्यक तपासणी केली.",
+                ]))
 
-        if has_dog and dog_name.strip():
-            lines.append(random.choice([
-                f"{dog_name} यांच्या घरातील एका व्यक्तीला कुत्रा चावल्याची घटना निदर्शनास आली. त्यांना तातडीने अँटी-रेबीज लस घेण्यासाठी प्राथमिक आरोग्य केंद्रात पाठविण्यात आले.",
-                f"{dog_name} यांच्या कुटुंबातील एक सदस्य कुत्रा चावल्यामुळे जखमी झाल्याचे आढळले. ARV उपचारासाठी रुग्णालयात पाठविले.",
-                f"{dog_name} यांच्या घरी एक संशयित श्वानदंश रुग्ण आढळला. त्वरित अँटी-रेबीज उपचारासाठी संदर्भित करून वरिष्ठांना माहिती दिली.",
-            ]))
+        if has_dog:
+            dog_name = get_patient_display(dog_info)
+            if dog_name:
+                lines.append(random.choice([
+                    f"{dog_name} यांना कुत्रा चावल्याची घटना निदर्शनास आली. त्यांना तातडीने अँटी-रेबीज लस घेण्यासाठी प्राथमिक आरोग्य केंद्रात पाठविण्यात आले.",
+                    f"{dog_name} हे कुत्रा चावल्यामुळे जखमी झाल्याचे आढळले. ARV उपचारासाठी रुग्णालयात पाठविले.",
+                    f"{dog_name} हे संशयित श्वानदंश रुग्ण आढळले. त्वरित अँटी-रेबीज उपचारासाठी संदर्भित करून वरिष्ठांना माहिती दिली.",
+                ]))
 
-        if has_motibi and motibi_name.strip():
-            lines.append(random.choice([
-                f"{motibi_name} यांना दृष्टी कमी होत असल्याचे व डोळ्यांत पांढरा पडदा येत असल्याचे आढळले. संशयित मोतीबिंदू म्हणून नोंद करून नेत्र तपासणीसाठी जिल्हा रुग्णालयात पाठविण्यात आले.",
-                f"{motibi_name} यांना वाचण्यास व जवळचे पाहण्यास त्रास होत असल्याचे आढळले. नेत्रतज्ज्ञांकडे तपासणीसाठी संदर्भित केले.",
-                f"{motibi_name} यांच्या डोळ्यांवर संशयित मोतीबिंदूची लक्षणे दिसल्याने त्यांची नोंद घेऊन योग्य उपचारासाठी मार्गदर्शन केले.",
-            ]))
+        if has_motibi:
+            motibi_name = get_patient_display(motibi_info)
+            if motibi_name:
+                lines.append(random.choice([
+                    f"{motibi_name} यांना दृष्टी कमी होत असल्याचे व डोळ्यांत पांढरा पडदा येत असल्याचे आढळले. संशयित मोतीबिंदू म्हणून नोंद करून नेत्र तपासणीसाठी जिल्हा रुग्णालयात पाठविण्यात आले.",
+                    f"{motibi_name} यांना वाचण्यास व जवळचे पाहण्यास त्रास होत असल्याचे आढळले. नेत्रतज्ज्ञांकडे तपासणीसाठी संदर्भित केले.",
+                    f"{motibi_name} यांच्या डोळ्यांवर संशयित मोतीबिंदूची लक्षणे दिसल्याने नोंद घेऊन योग्य उपचारासाठी मार्गदर्शन केले.",
+                ]))
 
-        if has_kusthar and kusthar_name.strip():
-            lines.append(random.choice([
-                f"{kusthar_name} यांच्या त्वचेवर बधिर चट्टे व संवेदनाहीन भाग असल्याचे निदर्शनास आले. संशयित कुष्ठरोग म्हणून नोंद करून NLEP केंद्रात तपासणीसाठी पाठविण्यात आले.",
-                f"{kusthar_name} यांच्या हाता-पायावर बधिरपणा व फिकट चट्टे आढळले. कुष्ठरोग संशयित म्हणून नोंद घेऊन जिल्हा कुष्ठरोग अधिकाऱ्यांना माहिती दिली.",
-                f"{kusthar_name} यांना त्वचेवरील चट्ट्यांबद्दल विचारले असता बधिरपणाची तक्रार असल्याचे कळले. संशयित कुष्ठरोग म्हणून नोंद करून उपचारासाठी संदर्भित केले.",
-            ]))
+        if has_kusthar:
+            kusthar_name = get_patient_display(kusthar_info)
+            if kusthar_name:
+                lines.append(random.choice([
+                    f"{kusthar_name} यांच्या त्वचेवर बधिर चट्टे व संवेदनाहीन भाग असल्याचे निदर्शनास आले. संशयित कुष्ठरोग म्हणून नोंद करून NLEP केंद्रात तपासणीसाठी पाठविण्यात आले.",
+                    f"{kusthar_name} यांच्या हाता-पायावर बधिरपणा व फिकट चट्टे आढळले. कुष्ठरोग संशयित म्हणून नोंद घेऊन जिल्हा कुष्ठरोग अधिकाऱ्यांना माहिती दिली.",
+                    f"{kusthar_name} यांना त्वचेवरील चट्ट्यांबद्दल विचारले असता बधिरपणाची तक्रार असल्याचे कळले. संशयित कुष्ठरोग म्हणून नोंद करून उपचारासाठी संदर्भित केले.",
+                ]))
 
-        if has_motibi_op and motibi_op_name.strip():
-            lines.append(random.choice([
-                f"{motibi_op_name} यांनी यापूर्वी मोतीबिंदू शस्त्रक्रिया केल्याचे सांगितले. शस्त्रक्रियेनंतरची प्रकृती तपासली; ते बरे असल्याचे समजले व नोंद घेण्यात आली.",
-                f"{motibi_op_name} यांची मोतीबिंदू ऑपरेशन नंतरची प्रकृती उत्तम असल्याचे आढळले. नियमित डोळ्याचे थेंब वापरण्याचे व पुनर्भेटीसाठी येण्याचे निर्देश दिले.",
-                f"{motibi_op_name} यांनी यशस्वी मोतीबिंदू शस्त्रक्रिया झाल्याचे सांगितले. दृष्टी सुधारल्याचे त्यांनी सांगितले; माहिती नोंदविण्यात आली.",
-            ]))
+        if has_motibi_op:
+            motibi_op_name = get_patient_display(motibi_op_info)
+            if motibi_op_name:
+                lines.append(random.choice([
+                    f"{motibi_op_name} यांनी यापूर्वी मोतीबिंदू शस्त्रक्रिया केल्याचे सांगितले. शस्त्रक्रियेनंतरची प्रकृती तपासली; ते बरे असल्याचे समजले व नोंद घेण्यात आली.",
+                    f"{motibi_op_name} यांची मोतीबिंदू ऑपरेशन नंतरची प्रकृती उत्तम असल्याचे आढळले. नियमित डोळ्याचे थेंब वापरण्याचे व पुनर्भेटीसाठी येण्याचे निर्देश दिले.",
+                    f"{motibi_op_name} यांनी यशस्वी मोतीबिंदू शस्त्रक्रिया झाल्याचे सांगितले. दृष्टी सुधारल्याचे त्यांनी सांगितले; माहिती नोंदविण्यात आली.",
+                ]))
 
-        return "\n".join(lines)  # only present conditions, no "नाही" lines
+        return "\n".join(lines)
 
     # ─────────────────────────────────────────────────────────────
-    # 10 Diary Formats — patient_text woven naturally into flow
+    # 10 Diary Formats — unchanged from original
     # ─────────────────────────────────────────────────────────────
     def get_diary_formats():
         return [
-            # Format 1 — सरळ वर्णन
+            # Format 1
             lambda d: (
                 f"📅 दिनांक: {d['date']}\n"
                 f"📍 वस्ती: {d['vasti']}\n\n"
@@ -175,13 +214,12 @@ def house_visit_lookup():
                 f"पॉझिटिव्ह आढळलेल्या भांड्यांमधील पाणी ओतून टाकण्यात आले व संबंधितांना पुन्हा असे होणार नाही याची खबरदारी घेण्यास सांगितले.\n\n"
                 f"House Index: {d['house_index']}% | Container Index: {d['container_index']}% | Breteau Index: {d['breteau_index']}%"
             ),
-
-            # Format 2 — कार्यक्रम शैली
+            # Format 2
             lambda d: (
                 f"📅 दिनांक: {d['date']}\n"
                 f"📍 ठिकाण: {d['vasti']}\n\n"
                 f"आजच्या दिवशी {d['vasti']} वस्तीतील नियोजित घरभेट कार्यक्रम पार पडला. "
-                f"म.क्र. {d['pasun']} ते {d['paryant']} या क्रमांकातील घरांचे सर्वेक्षण करण्यात आले. "
+                f"म.क्र. {d['pasun']} ते {d['paryant']} या क्रमांकातील {d['visited_count']} घरांचे सर्वेक्षण करण्यात आले. "
                 f"सर्वेक्षणाच्या सुरुवातीला वस्तीतील रस्त्यावरून फेरफटका मारून परिसराचे निरीक्षण केले. "
                 f"ठिकठिकाणी साचलेले पाणी व टाकाऊ वस्तू आढळल्या; त्याबाबत संबंधितांना सूचना दिल्या.\n\n"
                 f"भेट दिलेल्या प्रमुख कुटुंबांमध्ये {d['names_str']} यांचा समावेश होता. "
@@ -194,13 +232,12 @@ def house_visit_lookup():
                 f"उर्वरित भांडी स्वच्छ असल्याचे आढळले.\n\n"
                 f"निर्देशांक — HI: {d['house_index']}% | CI: {d['container_index']}% | BI: {d['breteau_index']}%"
             ),
-
-            # Format 3 — क्षेत्र नोंद
+            # Format 3
             lambda d: (
                 f"🗓️ दिनांक {d['date']} — क्षेत्र भेट नोंद\n"
                 f"📌 वस्ती: {d['vasti']}\n\n"
                 f"आज {d['vasti']} येथे किटकशास्त्रीय सर्वेक्षणासाठी भेट दिली. "
-                f"म.क्र. {d['pasun']} पासून {d['paryant']} पर्यंत घरांचे निरीक्षण केले. "
+                f"म.क्र. {d['pasun']} पासून {d['paryant']} पर्यंत {d['visited_count']} घरांचे निरीक्षण केले. "
                 f"{d['names_str']} या कुटुंब प्रमुखांशी भेट होऊन त्यांना डास प्रतिबंधाबाबत मार्गदर्शन केले. "
                 f"वस्तीतील काही घरांमागे मोकळ्या जागी टाकाऊ टायर व डबे पडलेले आढळले; ते हटविण्याची विनंती केली.\n\n"
                 f"सर्वेक्षणादरम्यान रहिवाशांनी चांगले सहकार्य दिले. "
@@ -212,8 +249,7 @@ def house_visit_lookup():
                 f"सकारात्मक घरांच्या मालकांना लेखी सूचना देण्यात आली.\n\n"
                 f"HI: {d['house_index']}% | CI: {d['container_index']}% | BI: {d['breteau_index']}%"
             ),
-
-            # Format 4 — दैनंदिन नोंद
+            # Format 4
             lambda d: (
                 f"दैनंदिन नोंद — {d['date']}\n"
                 f"स्थळ: {d['vasti']} | म.क्र. श्रेणी: {d['pasun']} – {d['paryant']}\n\n"
@@ -229,13 +265,11 @@ def house_visit_lookup():
                 + f"कंटेनर तपासणी: एकूण {d['total_containers']} | डास आढळले {d['das_containers']} | रिकामे केले {d['rikame_containers']}\n\n"
                 f"House Index: {d['house_index']}% | Container Index: {d['container_index']}% | Breteau Index: {d['breteau_index']}%"
             ),
-
-            # Format 5 — घरभेट दैनंदिनी
+            # Format 5
             lambda d: (
                 f"📋 घरभेट दैनंदिनी\n"
                 f"📅 दिनांक: {d['date']} | 📍 वस्ती: {d['vasti']}\n\n"
-                f"आज {d['vasti']} येथील म.क्र. {d['pasun']} ते {d['paryant']} पर्यंतच्या घरांना भेट दिली. "
-                f"{d['visited_count']} घरांचे सर्वेक्षण पूर्ण झाले. "
+                f"आज {d['vasti']} येथील म.क्र. {d['pasun']} ते {d['paryant']} पर्यंतच्या {d['visited_count']} घरांना भेट दिली. "
                 f"वस्तीत पोहोचल्यावर प्रथम वस्ती प्रमुखांशी भेट घेऊन सर्वेक्षणाची माहिती दिली. "
                 f"त्यांनी सकारात्मक प्रतिसाद दिला व रहिवाशांना सहकार्य करण्यास सांगितले.\n\n"
                 f"भेट घेतलेले कुटुंब प्रमुख: {d['names_str']}\n\n"
@@ -249,13 +283,12 @@ def house_visit_lookup():
                 f"रिकामे केलेले: {d['rikame_containers']}\n\n"
                 f"निर्देशांक: HI = {d['house_index']}% | CI = {d['container_index']}% | BI = {d['breteau_index']}%"
             ),
-
-            # Format 6 — साध्या भाषेत
+            # Format 6
             lambda d: (
                 f"दिनांक: {d['date']}\n"
                 f"वस्ती: {d['vasti']}\n\n"
                 f"आज {d['vasti']} येथे नियमित घरभेट सर्वेक्षण करण्यात आले. "
-                f"म.क्र. {d['pasun']} ते {d['paryant']} या क्रमांकाच्या घरांना भेट देऊन किटकशास्त्रीय तपासणी केली. "
+                f"म.क्र. {d['pasun']} ते {d['paryant']} या क्रमांकाच्या {d['visited_count']} घरांना भेट देऊन किटकशास्त्रीय तपासणी केली. "
                 f"वस्तीत पोहोचताना उन्हाचा जोर होता; तरीही रहिवाशांनी सहकार्य करून घरे उघडून दिली.\n\n"
                 f"{d['names_str']} यांच्या घरांची तपासणी करताना पाण्याची भांडी, टाक्या व इतर साठवण स्थळांची "
                 f"बारकाईने पाहणी केली. रहिवाशांना डास उत्पत्ती रोखण्यासाठी उपाययोजनांची माहिती दिली. "
@@ -267,8 +300,7 @@ def house_visit_lookup():
                 f"{d['rikame_containers']} कंटेनर रिकामे व स्वच्छ करण्यात आले.\n\n"
                 f"House Index: {d['house_index']}% | Container Index: {d['container_index']}% | Breteau Index: {d['breteau_index']}%"
             ),
-
-            # Format 7 — अहवाल शैली
+            # Format 7
             lambda d: (
                 f"🗒️ क्षेत्र सर्वेक्षण नोंद | {d['date']}\n\n"
                 f"आजचे सर्वेक्षण क्षेत्र: {d['vasti']} (म.क्र. {d['pasun']} – {d['paryant']})\n\n"
@@ -277,16 +309,14 @@ def house_visit_lookup():
                 f"प्रतिबंधासाठी घराभोवतालचे पाणी साचणार नाही याची काळजी घेण्यास सांगण्यात आले. "
                 f"प्रत्येक कुटुंबाला आठवड्यातून एकदा सर्व पाण्याची भांडी रिकामी करून पुसून ठेवण्याचे महत्त्व पटवून दिले.\n\n"
                 f"वस्तीतील काही घरांमागे मोकळ्या जागेत पाण्याचे डबके आढळले. "
-                f"ग्रामपंचायतीशी संपर्क साधून निचरा व्यवस्था सुधारण्याची विनंती करण्याचे नियोजन केले. "
-                f"शाळकरी मुलांनाही डास प्रतिबंधाबाबत माहिती देण्यासाठी शाळेत भेट देण्याचे ठरविले.\n\n"
+                f"ग्रामपंचायतीशी संपर्क साधून निचरा व्यवस्था सुधारण्याची विनंती करण्याचे नियोजन केले.\n\n"
                 + (f"{d['patient_text']}\n\n" if d['patient_text'] else "")
                 + f"आजच्या तपासणीत {d['total_containers']} कंटेनर तपासले. "
                 f"{d['das_containers']} मध्ये डासांची उत्पत्ती आढळली व {d['rikame_containers']} तातडीने रिकामे केले. "
                 f"पुढील भेटीत याच घरांचा पाठपुरावा करण्याचे नियोजन केले.\n\n"
                 f"HI: {d['house_index']}% | CI: {d['container_index']}% | BI: {d['breteau_index']}%"
             ),
-
-            # Format 8 — कार्य नोंद
+            # Format 8
             lambda d: (
                 f"{d['date']} — दैनंदिन कार्य नोंद\n"
                 f"वस्ती: {d['vasti']} | म.क्र.: {d['pasun']} ते {d['paryant']}\n\n"
@@ -295,9 +325,7 @@ def house_visit_lookup():
                 f"तसेच डास प्रतिबंधक उपायांबाबत प्रबोधन केले. "
                 f"सर्वेक्षणापूर्वी गावाच्या आरोग्य सेविकेशी संपर्क साधून वस्तीतील अलीकडच्या आजारपणाची माहिती घेतली.\n\n"
                 f"भेटीत लक्षात आले की काही घरांत पाण्याच्या टाक्या वर्षानुवर्षे साफ केलेल्या नाहीत. "
-                f"त्यांना टाकी साफ करण्याचे व झाकण ठेवण्याचे निर्देश दिले. "
-                f"ज्यांनी मागील भेटीत दिलेल्या सूचना पाळल्या होत्या त्यांचे कौतुक केले; "
-                f"यामुळे इतरांनाही प्रेरणा मिळाल्याचे जाणवले.\n\n"
+                f"त्यांना टाकी साफ करण्याचे व झाकण ठेवण्याचे निर्देश दिले.\n\n"
                 + (f"{d['patient_text']}\n\n" if d['patient_text'] else "")
                 + f"भांडी तपासणी अहवाल —\n"
                 f"▸ एकूण तपासलेले कंटेनर: {d['total_containers']}\n"
@@ -305,8 +333,7 @@ def house_visit_lookup():
                 f"▸ रिकामे केलेले कंटेनर: {d['rikame_containers']}\n\n"
                 f"House Index: {d['house_index']}% | Container Index: {d['container_index']}% | Breteau Index: {d['breteau_index']}%"
             ),
-
-            # Format 9 — स्थळ-केंद्रित
+            # Format 9
             lambda d: (
                 f"📌 {d['vasti']} — घरभेट | {d['date']}\n\n"
                 f"आज {d['date']} रोजी {d['vasti']} वस्तीतील नियोजित घरभेट पार पडली. "
@@ -316,14 +343,13 @@ def house_visit_lookup():
                 f"आजच्या भेटीत {d['names_str']} या कुटुंबांशी संपर्क झाला. "
                 f"पाण्याचे साठे, टाक्या, माठ, बादल्या यांची सखोल तपासणी केली. "
                 f"घराच्या आसपास उगवलेल्या झुडपांत व रिकाम्या भांड्यांत पावसाचे पाणी साचलेले आढळले; "
-                f"ते त्वरित काढून टाकण्यास सांगितले. वस्तीतील एकूण स्वच्छतेची परिस्थिती समाधानकारक होती.\n\n"
+                f"ते त्वरित काढून टाकण्यास सांगितले.\n\n"
                 + (f"{d['patient_text']}\n\n" if d['patient_text'] else "")
                 + f"कंटेनर: {d['total_containers']} तपासले → {d['das_containers']} पॉझिटिव्ह → {d['rikame_containers']} रिकामे. "
                 f"पुढील पंधरवड्यात याच घरांची पुन्हा तपासणी करण्याचे नियोजन केले.\n\n"
                 f"HI {d['house_index']}% | CI {d['container_index']}% | BI {d['breteau_index']}%"
             ),
-
-            # Format 10 — आरोग्य डायरी शैली
+            # Format 10
             lambda d: (
                 f"🏥 हिवताप / डेंग्यू सर्वेक्षण डायरी\n"
                 f"📅 {d['date']} | 📍 {d['vasti']}\n\n"
@@ -333,15 +359,15 @@ def house_visit_lookup():
                 f"ताप व हिवतापाच्या रुग्णांबाबत माहिती संकलित केली.\n\n"
                 f"{d['names_str']} या कुटुंब प्रमुखांशी भेट होऊन त्यांच्या घरातील व अंगणातील "
                 f"पाणीसाठ्यांची तपासणी केली. प्रत्येक कुटुंबाला आठवड्यातून एकदा पाण्याची भांडी "
-                f"रिकामी करण्याचा सल्ला देण्यात आला. काही उत्साही कुटुंबांनी स्वतःहून "
-                f"घरातील सर्व भांडी तपासणीसाठी बाहेर काढून ठेवली होती, हे पाहून आनंद झाला. "
-                f"वस्तीत डास प्रतिबंधाबाबत चांगली जाणीव निर्माण होत आहे असे जाणवले.\n\n"
+                f"रिकामी करण्याचा सल्ला देण्यात आला.\n\n"
                 + (f"{d['patient_text']}\n\n" if d['patient_text'] else "")
                 + f"कंटेनर तपासणी सारांश:\n"
                 f"तपासलेले: {d['total_containers']} | डास आढळलेले: {d['das_containers']} | रिकामे केलेले: {d['rikame_containers']}\n\n"
                 f"House Index: {d['house_index']}% | Container Index: {d['container_index']}% | Breteau Index: {d['breteau_index']}%"
             ),
-        ]# ══════════════════════════════════════════════════════════════
+        ]
+
+    # ══════════════════════════════════════════════════════════════
     # MAIN LOGIC
     # ══════════════════════════════════════════════════════════════
     half_meta, data_rows = load_movement(str(movement_path))
@@ -399,24 +425,29 @@ def house_visit_lookup():
     pasun   = matched_row["pasun"]
     paryant = matched_row["paryant"]
 
-    start    = pasun + month_code - 1
-    mno_list = []
-    n = start
-    while n <= paryant:
-        mno_list.append(n)
-        n += 10
+    # mno_list generation
+    if month_code == 0:
+        first = ((pasun + 9) // 10) * 10
+    else:
+        remainder = pasun % 10
+        diff      = (month_code - remainder) % 10
+        first     = pasun + diff
 
+    mno_list = list(range(first, paryant + 1, 10))
+
+    # ── IMPROVEMENT 1: pre-fill total_container from xlsx ──────
     results = []
     for idx, mno in enumerate(mno_list, start=1):
         record = mno_map.get(mno, None)
         fam    = record[0] if record else "❓ नोंद नाही"
-        mem    = record[1] if record else "-"
+        mem    = record[1] if record else 0          # always int
+        tc     = record[2] if record else 0          # total_container from xlsx
         results.append({
             "अ.क्र.":                              idx,
             "म.क्र. (m_no)":                       mno,
             "कुटुंब प्रमुख":                        fam,
             "सदस्य संख्या":                         mem,
-            "तपासलेल्या कंटेनरची संख्या":           0,
+            "तपासलेल्या कंटेनरची संख्या":           tc,  # pre-filled from xlsx
             "डास आढळून आलेल्या कंटेनरची संख्या":    0,
             "रिकामे केलेल्या कंटेनरची संख्या":       0,
         })
@@ -429,9 +460,11 @@ def house_visit_lookup():
 | **Half column** | `{matching_half['label']}` (code: **{month_code}**) |
 | **पासून** | {pasun} |
 | **पर्यंत** | {paryant} |
+| **एकूण घरे (पूर्ण श्रेणी)** | {paryant - pasun + 1} |
 """)
 
     st.markdown("### 👨‍👩‍👧 दैनिक किटकशास्त्रीय सर्वेक्षण")
+    st.caption("'तपासलेल्या कंटेनरची संख्या' Shelgaon_mno_records मधील total_container वरून आपोआप भरली आहे — आवश्यक असल्यास बदला.")
 
     edited_df = st.data_editor(
         pd.DataFrame(results),
@@ -449,39 +482,60 @@ def house_visit_lookup():
         key=f"survey_table_{selected_date}",
     )
 
-    # ── Indexes ────────────────────────────────────────────────
-    total_tapasleli_ghare     = len(edited_df)
-    total_tapasleli_container = edited_df["तपासलेल्या कंटेनरची संख्या"].sum()
-    total_das_container       = edited_df["डास आढळून आलेल्या कंटेनरची संख्या"].sum()
-    total_rikame_container    = edited_df["रिकामे केलेल्या कंटेनरची संख्या"].sum()
-    total_das_ghare           = int((edited_df["डास आढळून आलेल्या कंटेनरची संख्या"] > 0).sum())
+    # ── IMPROVEMENT 2: editable summary table for indexes ──────
+    total_range_ghare = paryant - pasun + 1
 
-    house_index     = (total_das_ghare     / total_tapasleli_ghare      * 100) if total_tapasleli_ghare     > 0 else 0.0
-    container_index = (total_das_container / total_tapasleli_container   * 100) if total_tapasleli_container > 0 else 0.0
-    breteau_index   = (total_das_container / total_tapasleli_ghare       * 100) if total_tapasleli_ghare     > 0 else 0.0
+    # Auto-compute from per-house table
+    auto_das_ghare   = int((edited_df["डास आढळून आलेल्या कंटेनरची संख्या"] > 0).sum())
+    auto_total_cont  = int(edited_df["तपासलेल्या कंटेनरची संख्या"].sum())
+    auto_das_cont    = int(edited_df["डास आढळून आलेल्या कंटेनरची संख्या"].sum())
+    auto_rikame_cont = int(edited_df["रिकामे केलेल्या कंटेनरची संख्या"].sum())
 
     st.markdown("---")
-    st.markdown("### 📊 किटकशास्त्रीय निर्देशांक")
+    st.markdown("### 📊 किटकशास्त्रीय निर्देशांक — एकूण सारांश")
+    st.caption("खालील आकडे घरनिहाय तक्त्यावरून आपोआप भरले आहेत. आवश्यक असल्यास थेट बदला.")
+
+    summary_df = pd.DataFrame([{
+        "एकूण घरे":                  total_range_ghare,
+        "डास आढळलेली घरे":           auto_das_ghare,
+        "एकूण तपासलेले कंटेनर":      auto_total_cont,
+        "एकूण डास आढळलेले कंटेनर":   auto_das_cont,
+        "एकूण रिकामे केलेले कंटेनर": auto_rikame_cont,
+    }])
+
+    edited_summary = st.data_editor(
+        summary_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            col: st.column_config.NumberColumn(min_value=0, step=1)
+            for col in summary_df.columns
+        },
+        key=f"summary_table_{selected_date}",
+    )
+
+    # Compute indexes from editable summary row
+    s                     = edited_summary.iloc[0]
+    final_ghare           = int(s["एकूण घरे"])
+    final_das_ghare       = int(s["डास आढळलेली घरे"])
+    final_total_cont      = int(s["एकूण तपासलेले कंटेनर"])
+    final_das_cont        = int(s["एकूण डास आढळलेले कंटेनर"])
+    final_rikame_cont     = int(s["एकूण रिकामे केलेले कंटेनर"])
+
+    house_index     = (final_das_ghare  / final_ghare      * 100) if final_ghare      > 0 else 0.0
+    container_index = (final_das_cont   / final_total_cont * 100) if final_total_cont > 0 else 0.0
+    breteau_index   = (final_das_cont   / final_ghare      * 100) if final_ghare      > 0 else 0.0
+
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric("🏠 House Index",     f"{house_index:.2f}%")
+        st.metric("🏠 House Index",     f"{house_index:.2f}%",
+                  help="(डास आढळलेली घरे ÷ एकूण घरे) × 100")
     with c2:
-        st.metric("🪣 Container Index", f"{container_index:.2f}%")
+        st.metric("🪣 Container Index", f"{container_index:.2f}%",
+                  help="(डास आढळलेले कंटेनर ÷ एकूण तपासलेले कंटेनर) × 100")
     with c3:
-        st.metric("📐 Breteau Index",   f"{breteau_index:.2f}%")
-
-    st.markdown("---")
-    st.markdown("#### 📋 एकूण सारांश")
-    st.table(pd.DataFrame([{
-        "एकूण तपासलेली घरे":        total_tapasleli_ghare,
-        "डास आढळलेली घरे":           total_das_ghare,
-        "एकूण तपासलेले कंटेनर":      int(total_tapasleli_container),
-        "एकूण डास आढळलेले कंटेनर":   int(total_das_container),
-        "एकूण रिकामे केलेले कंटेनर": int(total_rikame_container),
-        "House Index (%)":           round(house_index, 2),
-        "Container Index (%)":       round(container_index, 2),
-        "Breteau Index (%)":         round(breteau_index, 2),
-    }]))
+        st.metric("📐 Breteau Index",   f"{breteau_index:.2f}%",
+                  help="(डास आढळलेले कंटेनर ÷ एकूण घरे) × 100")
 
     # ══════════════════════════════════════════════════════════════
     # DIARY SECTION
@@ -489,53 +543,106 @@ def house_visit_lookup():
     st.markdown("---")
     st.markdown("### 📝 डायरी लेखन — रुग्ण माहिती")
 
-    # Names pool: m_no 1–50, fallback to current results
-    range_names = [
-        mno_map[m][0]
-        for m in range(1, 51)
-        if m in mno_map and mno_map[m][0] and "नोंद नाही" not in mno_map[m][0]
-    ]
-    if not range_names:
-        range_names = [
-            r["कुटुंब प्रमुख"]
-            for r in results
-            if r["कुटुंब प्रमुख"] and "नोंद नाही" not in r["कुटुंब प्रमुख"]
-        ]
-    name_opts = range_names if range_names else ["(नाव उपलब्ध नाही)"]
+    # ── IMPROVEMENT 3: names from mno_list range only ──────────
+    # Selectbox label = "m_no – कुटुंब प्रमुख" so user can identify house
+    mno_label_opts = []
+    mno_list_all = list(range(pasun, paryant + 1))
+    for m in mno_list_all:
+        rec = mno_map.get(m)
+        if rec and rec[0] and "नोंद नाही" not in rec[0]:
+            mno_label_opts.append(f"{m} – {rec[0]}")
 
-    def rugna_widget(checkbox_label, select_label, key_prefix):
-        found = st.checkbox(checkbox_label, value=False, key=f"{key_prefix}_chk_{selected_date}")
-        name  = ""
+    kutumb_opts = ["-- निवडा --"] + mno_label_opts
+
+    # ── Patient widget ──────────────────────────────────────────
+    def rugna_widget(checkbox_label, key_prefix):
+        found = st.checkbox(
+            checkbox_label,
+            value=False,
+            key=f"{key_prefix}_chk_{selected_date}",
+        )
+        info = {
+            "name":         "",   # kutumb pramukh (house identifier)
+            "patient_name": "",   # actual patient name (free text)
+            "gender":       "--",
+            "age":          "",
+            "other":        "",
+        }
         if found:
-            name = st.selectbox(select_label, options=name_opts, key=f"{key_prefix}_sel_{selected_date}")
-        return found, name
+            with st.container():
+                # Row 1: kutumb selectbox + patient name text input
+                col_kp, col_pn = st.columns(2)
+                with col_kp:
+                    sel = st.selectbox(
+                        "🏠 कुटुंब प्रमुख निवडा (घर ओळखण्यासाठी):",
+                        options=kutumb_opts,
+                        key=f"{key_prefix}_kp_{selected_date}",
+                    )
+                    # Store only the name portion after " – "
+                    if sel != "-- निवडा --" and " – " in sel:
+                        info["name"] = sel.split(" – ", 1)[1].strip()
+                    elif sel != "-- निवडा --":
+                        info["name"] = sel
+                with col_pn:
+                    info["patient_name"] = st.text_input(
+                        "👤 रुग्णाचे नाव (स्वतः टाका):",
+                        key=f"{key_prefix}_pn_{selected_date}",
+                        placeholder="रुग्णाचे पूर्ण नाव लिहा",
+                    )
+                # Row 2: gender / age / other
+                col_g, col_a, col_o = st.columns(3)
+                with col_g:
+                    info["gender"] = st.selectbox(
+                        "लिंग:",
+                        options=["--", "पुरुष", "स्त्री", "इतर"],
+                        key=f"{key_prefix}_gen_{selected_date}",
+                    )
+                with col_a:
+                    info["age"] = st.text_input(
+                        "वय (वर्षे):",
+                        key=f"{key_prefix}_age_{selected_date}",
+                        placeholder="उदा. 35",
+                    )
+                with col_o:
+                    info["other"] = st.text_input(
+                        "इतर माहिती / लक्षणे:",
+                        key=f"{key_prefix}_oth_{selected_date}",
+                        placeholder="उदा. थंडी ताप 3 दिवस",
+                    )
+        return found, info
 
     col_a, col_b = st.columns(2)
     with col_a:
-        has_fever,     fever_name     = rugna_widget("🤒 संशयित हिवताप / डेंग्यू रुग्ण आढळला का?",        "हिवताप / डेंग्यू रुग्णाचे नाव:", "fever")
-        has_tb,        tb_name        = rugna_widget("🫁 संशयित क्षयरोग (TB) रुग्ण आढळला का?",            "TB रुग्णाचे नाव:",               "tb")
-        has_dog,       dog_name       = rugna_widget("🐕 संशयित श्वानदंश (कुत्रा चावणे) रुग्ण आढळला का?", "श्वानदंश रुग्णाचे नाव:",         "dog")
+        has_fever,     fever_info     = rugna_widget("🤒 संशयित हिवताप / डेंग्यू रुग्ण आढळला का?",        "fever")
+        has_tb,        tb_info        = rugna_widget("🫁 संशयित क्षयरोग (TB) रुग्ण आढळला का?",            "tb")
+        has_dog,       dog_info       = rugna_widget("🐕 संशयित श्वानदंश (कुत्रा चावणे) रुग्ण आढळला का?", "dog")
     with col_b:
-        has_motibi,    motibi_name    = rugna_widget("👁️ संशयित मोतीबिंदू रुग्ण आढळला का?",              "मोतीबिंदू रुग्णाचे नाव:",        "motibi")
-        has_kusthar,   kusthar_name   = rugna_widget("🩹 संशयित कुष्ठरोग रुग्ण आढळला का?",               "कुष्ठरोग रुग्णाचे नाव:",         "kusthar")
-        has_motibi_op, motibi_op_name = rugna_widget("🏥 मोतीबिंदू ऑपरेशन केलेला रुग्ण आढळला का?",       "मोतीबिंदू ऑपरेशन रुग्णाचे नाव:", "motibi_op")
+        has_motibi,    motibi_info    = rugna_widget("👁️ संशयित मोतीबिंदू रुग्ण आढळला का?",              "motibi")
+        has_kusthar,   kusthar_info   = rugna_widget("🩹 संशयित कुष्ठरोग रुग्ण आढळला का?",               "kusthar")
+        has_motibi_op, motibi_op_info = rugna_widget("🏥 मोतीबिंदू ऑपरेशन केलेला रुग्ण आढळला का?",       "motibi_op")
 
     st.markdown("")
     if st.button("📔 डायरी लिहा", type="primary", key=f"diary_btn_{selected_date}"):
 
-        # 4–5 random names from pool
-        pick_count   = min(random.randint(4, 5), len(name_opts))
-        picked_names = random.sample(name_opts, pick_count) if pick_count > 0 else ["(नाव उपलब्ध नाही)"]
+        # 4-5 random kutumb pramukh names from range
+        pool = [
+            mno_map[m][0]
+            for m in mno_list
+            if m in mno_map and mno_map[m][0] and "नोंद नाही" not in mno_map[m][0]
+        ]
+        if not pool:
+            pool = ["(नाव उपलब्ध नाही)"]
+        pick_count   = min(random.randint(4, 5), len(pool))
+        picked_names = random.sample(pool, pick_count)
         names_str    = names_to_str(picked_names)
 
-        # Only present-condition lines — no "नाही" text
         patient_text = build_patient_lines(
-            has_fever,    fever_name,
-            has_tb,       tb_name,
-            has_dog,      dog_name,
-            has_motibi,   motibi_name,
-            has_kusthar,  kusthar_name,
-            has_motibi_op, motibi_op_name,
+            has_fever,    fever_info,
+            has_tb,       tb_info,
+            has_dog,      dog_info,
+            has_motibi,   motibi_info,
+            has_kusthar,  kusthar_info,
+            has_motibi_op, motibi_op_info,
         )
 
         diary_data = {
@@ -543,11 +650,11 @@ def house_visit_lookup():
             "vasti":             vasti,
             "pasun":             pasun,
             "paryant":           paryant,
-            "visited_count":     total_tapasleli_ghare,
+            "visited_count":     final_ghare,
             "names_str":         names_str,
-            "total_containers":  int(total_tapasleli_container),
-            "das_containers":    int(total_das_container),
-            "rikame_containers": int(total_rikame_container),
+            "total_containers":  final_total_cont,
+            "das_containers":    final_das_cont,
+            "rikame_containers": final_rikame_cont,
             "house_index":       round(house_index, 2),
             "container_index":   round(container_index, 2),
             "breteau_index":     round(breteau_index, 2),
