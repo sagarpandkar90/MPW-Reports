@@ -9,8 +9,9 @@ def house_visit_lookup():
     BASE_DIR        = Path(__file__).resolve().parent
     movement_path   = BASE_DIR / "movement.xlsx"
     mno_path        = BASE_DIR / "Shelgaon_mno_records.xlsx"
+    family_path = BASE_DIR / "sample_family_data.xlsx"
 
-    for p in [movement_path, mno_path]:
+    for p in [movement_path, mno_path, family_path ]:
         if not p.exists():
             st.error(f"❌ '{p.name}' project folder मध्ये नाही!")
             return
@@ -60,6 +61,36 @@ def house_visit_lookup():
             })
         return half_meta, data_rows
 
+    @st.cache_data
+    def load_family_data(path_str):
+        """Returns { mno -> [{name, age, sex, ajar}, ...] }"""
+        if not Path(path_str).exists(): return {}
+        wb = load_workbook(path_str, read_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        header = [str(c).strip().lower() if c else "" for c in rows[0]]
+
+        # Identify columns
+        idx_mno = next((i for i, h in enumerate(header) if any(x in h for x in ['mno', 'm_no'])), None)
+        idx_name = next((i for i, h in enumerate(header) if 'name' in h or 'नाव' in h), None)
+        idx_age = next((i for i, h in enumerate(header) if 'age' in h or 'वय' in h or 'birth' in h), None)
+        idx_sex = next((i for i, h in enumerate(header) if 'sex' in h or 'ling' in h or 'लिंग' in h), None)
+        idx_aj = next((i for i, h in enumerate(header) if 'ajar' in h or 'आजारी' in h), None)
+
+        f_map = {}
+        for row in rows[1:]:
+            try:
+                mno = int(float(row[idx_mno]))
+                f_map.setdefault(mno, []).append({
+                    "name": str(row[idx_name] or "Unknown"),
+                    "age": str(row[idx_age] or "-"),
+                    "sex": str(row[idx_sex] or "-"),
+                    "ajar": str(row[idx_aj]).strip().lower() if idx_aj else "no"
+                })
+            except:
+                continue
+        return f_map
+
     # ── IMPROVEMENT 1: load total_container from xlsx ──────────
     @st.cache_data
     def load_mno_records(path_str):
@@ -95,6 +126,31 @@ def house_visit_lookup():
     # ─────────────────────────────────────────────────────────────
     # Helpers
     # ─────────────────────────────────────────────────────────────
+    def render_family_tables(mno_list, mno_map, family_map):
+        st.markdown("### 🏠 आजच्या भेटीतील घरे व कुटुंब सदस्य")
+        st.caption("खालील घरांच्या यादीवर क्लिक करून घरातील सर्व सदस्यांची माहिती पहा.")
+
+        for mno in mno_list:
+            head = mno_map.get(mno, ("नोंद नाही", 0, 0))[0]
+            members = family_map.get(mno, [])
+
+            with st.expander(f"म.क्र. {mno} | {head} | सदस्य: {len(members)}"):
+                if not members:
+                    st.write("या घराची सदस्य माहिती उपलब्ध नाही.")
+                else:
+                    rows = ""
+                    for m in members:
+                        status = "<span style='color:red;'>आजारी</span>" if "yes" in m[
+                            'ajar'] else "<span style='color:green;'>ठीक</span>"
+                        rows += f"<tr><td>{m['name']}</td><td>{m['sex']}</td><td style='text-align:center;'>{m['age']}</td><td>{status}</td></tr>"
+
+                    st.markdown(f"""
+                    <table style="width:100%; border-collapse: collapse; font-family: 'Noto Sans Devanagari';">
+                        <tr style="background-color: #f0f2f6;"><th>नाव</th><th>लिंग</th><th>वय</th><th>स्थिती</th></tr>
+                        {rows}
+                    </table>
+                    """, unsafe_allow_html=True)
+
     def names_to_str(name_list):
         if not name_list:
             return "(नाव उपलब्ध नाही)"
@@ -372,7 +428,7 @@ def house_visit_lookup():
     # ══════════════════════════════════════════════════════════════
     half_meta, data_rows = load_movement(str(movement_path))
     mno_map              = load_mno_records(str(mno_path))
-
+    family_map = load_family_data(str(family_path))
     if not mno_map:
         return
 
@@ -424,6 +480,7 @@ def house_visit_lookup():
     vasti   = matched_row["vasti"]
     pasun   = matched_row["pasun"]
     paryant = matched_row["paryant"]
+
 
     # mno_list generation
     if month_code == 0:
@@ -689,3 +746,4 @@ def house_visit_lookup():
                 height=320,
                 key=f"diary_copy_{selected_date}_{random.randint(1000, 9999)}",
             )
+    render_family_tables(list(range(pasun, paryant + 1)), mno_map, family_map)
