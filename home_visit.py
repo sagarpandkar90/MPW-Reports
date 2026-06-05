@@ -560,12 +560,13 @@ def house_visit_lookup():
         "एकूण रिकामे केलेले कंटेनर": auto_rikame_cont,
     }])
 
+
     edited_summary = st.data_editor(
         summary_df,
         use_container_width=True,
         hide_index=True,
         column_config={
-            col: st.column_config.NumberColumn(min_value=0, step=1)
+            col: st.column_config.NumberColumn(min_value=0, step=1, width="small")
             for col in summary_df.columns
         },
         key=f"summary_table_{selected_date}",
